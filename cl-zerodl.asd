@@ -11,10 +11,11 @@
   :version "0.1"
   :author "Satoshi Imai"
   :license "MIT"
-  :depends-on (:clgplot)
+  :depends-on (:clgplot :mgl-mat :metabang-bind)
   :components ((:module "src"
                 :components
-                ((:file "matrix")
+                ((:file "cl-zerodl")
+                 ;; (:file "matrix")
                  ;; (:file "2-perceptron")
                  ;; (:file "3-neural-networks" :depends-on ("matrix"))
                  )))
