@@ -296,13 +296,13 @@ result
 
 (defmethod forward ((layer affine-layer) &rest inputs)
   (let* ((x (car inputs))
-         (batch-size (mat-dimension x 1))
          (W (weight layer))
          (b (bias layer))
          (bs (stacked-bias layer))
          (out (forward-out layer)))
     (copy! x (x layer))
-    (stack! 1 (loop repeat batch-size collect b) bs)
+    (fill! 1.0 bs)
+    (scale-rows! b bs)
     (gemm! 1.0 W x 0.0 out)
     (axpy! 1.0 bs out)))
 
@@ -311,9 +311,9 @@ result
 (setf (bias affine-layer1) (make-mat '(3 1) :initial-contents '((1) (2) (3))))
 (defparameter x-affine (make-mat '(4 2) :initial-contents '((10 50) (20 60) (30 70) (40 80))))
 
-(print (forward affine-layer1 x-affine))
+(time (print (forward affine-layer1 x-affine)))
 
-;; #<MAT 3x2 AF #2A((131.0 181.0) (172.0 242.0) (213.0 303.0))> 
+;; #<MAT 3x2 F #2A((701.0 1581.0) (802.0 1842.0) (903.0 2103.0))> 
 
 (defmethod backward ((layer affine-layer) dout)
   (bind (((dx dW db) (backward-out layer)))
@@ -335,3 +335,114 @@ result
 ;;                   (120.0 160.0 200.0 240.0)
 ;;                   (180.0 240.0 300.0 360.0))>
 ;;  #<MAT 3x1 AF #2A((2.0) (4.0) (6.0))>)
+
+(defun average! (a batch-size-tmp)
+  (sum! a batch-size-tmp :axis 0)
+  (scal! (/ 1.0 (mat-dimension a 0)) batch-size-tmp))
+
+(defun softmax! (a result batch-size-tmp)
+  ;; In order to avoid overflow, subtract average value for each column.
+  (average! a batch-size-tmp)
+  (fill! 1.0 result)
+  (geerv! -1.0 result batch-size-tmp 1.0 a) ; a - average(a)
+
+  (.exp! a)
+  (sum! a batch-size-tmp :axis 0)
+  (scale-columns! batch-size-tmp result)
+  (.inv! result)
+  (geem! 1.0 a result 0.0 result))
+
+(defparameter a (make-mat '(3 2) :initial-contents '((0.3  1010)
+                                                     (2.9  1000)
+                                                     (4.0   990))))
+(defparameter result (make-mat '(3 2)))
+(defparameter batch-size-tmp (make-mat '(1 2)))
+
+(softmax! a result batch-size-tmp)
+
+;; #<MAT 3x2 B #2A((0.018211272 0.99995464)
+;;                 (0.24519181 4.5397872e-5)
+;;                 (0.7365969 2.0610602e-9))>
+
+
+;;; cross-entropy
+
+(defun cross-entropy! (y target tmp batch-size-tmp size-1-tmp)
+  (let ((delta 1e-7)
+        (batch-size (mat-dimension target 1)))
+    (copy! y tmp)
+    (.+! delta tmp)
+    (.log! tmp)
+    (geem! 1.0 target tmp 0.0 tmp)
+    (sum! tmp batch-size-tmp :axis 0)
+    (sum! batch-size-tmp size-1-tmp :axis 1)
+    (/ (mat-as-scalar size-1-tmp) batch-size)))
+
+(defparameter y (make-mat '(3 2) :initial-contents '((1.1 3.1)
+                                                     (1.2 5.1)
+                                                     (1.3 0.1))))
+
+(defparameter target (make-mat '(3 2) :initial-contents '((1 0)
+                                                          (0 1)
+                                                          (0 0))))
+
+(defparameter tmp (make-mat '(3 2)))
+(defparameter batch-size-tmp (make-mat '(1 2)))
+(defparameter size-1-tmp (make-mat '(1 1)))
+
+(cross-entropy! y target tmp batch-size-tmp size-1-tmp) ; (/ (+ (log (+ 1.1 1e-7)) (log (+ 5.1 1e-7))) 2)
+
+;;; 5.6.3 Softmax-with-loss
+
+(define-class softmax/loss-layer (layer)
+  loss y target batch-size-tmp size-1-tmp)
+
+(defun make-softmax/loss-layer (input-dimensions)
+  (make-instance 'softmax/loss-layer
+                 :input-dimensions  input-dimensions
+                 :output-dimensions 1
+                 :backward-out (make-mat input-dimensions)
+                 :y (make-mat input-dimensions)
+                 :target (make-mat input-dimensions)
+                 :batch-size-tmp (make-mat (list 1 (cadr input-dimensions)))
+                 :size-1-tmp (make-mat '(1 1))))
+
+(defparameter softmax/loss-layer1 (make-softmax/loss-layer '(3 2)))
+
+(defmethod forward ((layer softmax/loss-layer) &rest inputs)
+  (bind (((x target) inputs)
+         (tmp (target layer)) ; use (target layer) as tmp
+         (y (y layer))
+         (batch-size-tmp (batch-size-tmp layer))
+         (size-1-tmp (size-1-tmp layer)))
+    (copy! x tmp)
+    (softmax! tmp y batch-size-tmp)
+    (let ((out (cross-entropy! y target tmp batch-size-tmp size-1-tmp)))
+      (copy! target (target layer))
+      (setf (forward-out layer) out)
+      out)))
+
+(defparameter x-softmax/loss
+  (make-mat '(3 2) :initial-contents '((0.3  1010)
+                                       (2.9  1000)
+                                       (4.0   990))))
+(defparameter target (make-mat '(3 2) :initial-contents '((1 0)
+                                                          (0 1)
+                                                          (0 0))))
+
+(forward softmax/loss-layer1 x-softmax/loss target)
+;; => -7.0017767
+
+(defmethod backward ((layer softmax/loss-layer) dout)
+  (let* ((target (target layer))
+         (y      (y layer))
+         (out    (backward-out layer))
+         (batch-size (mat-dimension target 1)))
+    (copy! y out)
+    (axpy! -1.0 target out)
+    (scal! (/ 1.0 batch-size) out)))
+
+(backward softmax/loss-layer1 1.0)
+;; #<MAT 3x2 AF #2A((-0.49089438 0.49997732)
+;;                  (0.122595906 -0.4999773)
+;;                  (0.36829844 1.0305301e-9))>

@@ -6,6 +6,36 @@
 (gemm! 1.0 ma mb 0.0 mc) ; => #<MAT 2x2 AF #2A((19.0 22.0) (43.0 50.0))>
 mc                       ; => #<MAT 2x2 AF #2A((19.0 22.0) (43.0 50.0))>
 
+;;; When use CUDA
+(setf *print-length* 10
+      *print-level* 10)
+
+(defparameter ma (make-mat '(10000 10000)))
+(defparameter mb (make-mat '(10000 10000)))
+(defparameter mc (make-mat '(10000 10000)))
+
+(uniform-random! ma)
+(uniform-random! mb)
+
+(time (gemm! 1.0 ma mb 0.0 mc))
+
+;; Evaluation took:
+;;   6.539 seconds of real time
+;;   26.092000 seconds of total run time (25.744000 user, 0.348000 system)
+;;   399.02% CPU
+;;   22,180,377,236 processor cycles
+;;   0 bytes consed
+
+(with-cuda* ()
+  (time (gemm! 1.0 ma mb 0.0 mc)))
+
+;; Evaluation took:
+;;   0.427 seconds of real time
+;;   0.424000 seconds of total run time (0.424000 user, 0.000000 system)
+;;   99.30% CPU
+;;   1,447,343,752 processor cycles
+;;   0 bytes consed
+
 (defparameter va (make-mat '(3 1) :initial-contents '((1) (2) (3))))
 (defparameter vb (make-mat '(3 1) :initial-contents '((10) (20) (30))))
 
@@ -57,7 +87,6 @@ vb                ; => #<MAT 3x1 ABF #2A((11.0) (22.0) (33.0))>
 (gemm! 1.0 W3 z2 0.0 z3)
 (axpy! 1.0 b3 z3) ; => #<MAT 2x1 AF #2A((0.3168271) (0.6962791))>
 
-
 (time
  (loop repeat 1000 do
    (gemm! 1.0 W1 x 0.0 z1)
@@ -75,4 +104,3 @@ vb                ; => #<MAT 3x1 ABF #2A((11.0) (22.0) (33.0))>
 ;;   100.00% CPU
 ;;   691,968 processor cycles
 ;;   0 bytes consed
-
