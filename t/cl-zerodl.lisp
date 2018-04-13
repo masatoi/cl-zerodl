@@ -133,5 +133,4 @@
 (print (set-gradient! network1 x1 target1))
 
 
-
 (finalize)

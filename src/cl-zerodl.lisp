@@ -3,7 +3,7 @@
 (in-package :cl-user)
 
 (defpackage cl-zerodl
-  (:use :cl :mgl-mat :metabang.bind)
+  (:use :cl :mgl-mat :metabang.bind :alexandria)
   (:nicknames :zerodl))
 
 (in-package :cl-zerodl)
@@ -206,13 +206,78 @@
     (axpy! -1.0 target out)
     (scal! (/ 1.0 batch-size) out)))
 
-;;; Neural Network
+;;; Optimizer
+
+(define-class optimizer ())
+
+(define-class sgd (optimizer)
+  (learning-rate 0.1))
+
+(defmethod update! ((optimizer sgd) parameter gradient)
+  (axpy! (- (learning-rate optimizer)) gradient parameter))
+
+(define-class momentum-sgd (sgd)
+  velocities momentum)
+
+;; (defparameter *parameters*
+;;   (list (weight (aref (layers mnist-network) 0))
+;;         (bias   (aref (layers mnist-network) 0))
+;;         (weight (aref (layers mnist-network) 2))
+;;         (bias   (aref (layers mnist-network) 2))))
+
+;; (make-momentum-sgd 0.01 1.0 *parameters*)
+
+(defun make-momentum-sgd (learning-rate momentum network)
+  (let ((opt (make-instance 'momentum-sgd
+                            :learning-rate learning-rate
+                            :momentum momentum))
+        (updatable-params
+          (flatten (map 'list
+              (lambda (layer)
+                (list (weight layer) (bias layer)))
+              (remove-if-not (lambda (layer) (eq (type-of layer) 'affine-layer))
+                             (layers network))))))
+    (dolist (param updatable-params)
+      (setf (getf (velocities opt) param)
+            (make-mat (mat-dimensions param) :initial-element 0.0)))
+    opt))
+
+;; (defparameter *opt* (make-momentum-sgd 0.01 0.9 *parameters*))
+
+(defmethod update! ((optimizer momentum-sgd) parameter gradient)
+  (let ((velocity (getf (velocities optimizer) parameter)))
+    (scal! (momentum optimizer) velocity)
+    (axpy! (- (learning-rate optimizer)) gradient velocity)
+    (axpy! 1.0 velocity parameter)))
+
+;;; Initializer
+(define-class initializer ())
+
+(define-class gaussian-initializer (initializer)
+  (weight-init-std 0.01))
+
+(defmethod initialize! ((initializer gaussian-initializer) parameter)
+  (gaussian-random! parameter :stddev (weight-init-std initializer)))
+
+(define-class xavier-initializer (initializer))
+
+(defmethod initialize! ((initializer xavier-initializer) parameter)
+  (gaussian-random! parameter :stddev (/ 1.0 (sqrt (mat-dimension parameter 0)))))
+
+(define-class he-initializer (initializer))
+
+(defmethod initialize! ((initializer he-initializer) parameter)
+  (gaussian-random! parameter :stddev (sqrt (/ 2.0 (mat-dimension parameter 0)))))
+
+;;; Network operations
+
+;;; Network
 
 (define-class network ()
   layers batch-size initializer optimizer)
 
 (defun spec->layer (spec batch-size)
-  (let ((input-dimensions (list batch-size (getf (cdr spec) :in)))
+  (let ((input-dimensions  (list batch-size (getf (cdr spec) :in)))
         (output-dimensions (list batch-size (getf (cdr spec) :out))))
     (ecase (car spec)
       (affine  (make-affine-layer  input-dimensions output-dimensions))
@@ -225,19 +290,30 @@
     (when (eq (type-of ,layer) 'affine-layer)
       ,@body)))
 
-(defun init-gaussian (network &key (weight-init-std 0.01))
+(defun update-network! (network)
   (do-affine-layer (layer network)
-    (gaussian-random! (weight layer))
-    (scal! weight-init-std (weight layer))))
+    (bind (((dx dW db) (backward-out layer)))
+      (declare (ignore dx))
+      (update! (optimizer network) (weight layer) dW)
+      (update! (optimizer network) (bias layer)   db))))
 
-(defun make-network (layer-specs batch-size &key (initializer #'init-gaussian))
+(defun initialize-network! (network)
+  (do-affine-layer (layer network)
+    (initialize! (initializer network) (weight layer))))
+
+(defun make-network (layer-specs
+                     &key (batch-size 100)
+                       (initializer (make-instance 'gaussian-initializer))
+                       (optimizer   (make-instance 'sgd)))
   (let ((network (make-instance
                   'network
                   :layers (map 'vector
                                (lambda (spec) (spec->layer spec batch-size))
                                layer-specs)
-                  :batch-size batch-size)))
-    (funcall initializer network)
+                  :batch-size  batch-size
+                  :initializer initializer
+                  :optimizer   optimizer)))
+    (initialize-network! network)
     network))
 
 (defun last-layer (network)
@@ -311,13 +387,9 @@
 
 ;;; Training
 
-(defun train (network x target &key (learning-rate 0.1))
+(defun train (network x target)
   (set-gradient! network x target)
-  (do-affine-layer (layer network)
-    (bind (((dx dW dB) (backward-out layer)))
-      (declare (ignore dx))
-      (axpy! (- learning-rate) dW (weight layer))
-      (axpy! (- learning-rate) dB (bias layer)))))
+  (update-network! network))
 
 ;;; Predict class, Accuracy for dataset
 

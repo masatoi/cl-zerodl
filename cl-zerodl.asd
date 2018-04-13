@@ -11,7 +11,7 @@
   :version "0.1"
   :author "Satoshi Imai"
   :license "MIT"
-  :depends-on (:clgplot :mgl-mat :metabang-bind :cl-libsvm-format)
+  :depends-on (:clgplot :mgl-mat :metabang-bind :cl-libsvm-format :alexandria)
   :components ((:module "src"
                 :components
                 ((:file "cl-zerodl")

@@ -13,11 +13,12 @@
   (defparameter mnist-target-test target))
 
 (defparameter mnist-network
-  (make-network '((affine  :in 784 :out 50)
-                  (relu    :in 50)
-                  (affine  :in 50  :out 10)
+  (make-network '((affine  :in 784 :out 256)
+                  (relu    :in 256)
+                  (affine  :in 256  :out 10)
                   (softmax :in 10))
-                100))
+                :batch-size 100
+                :initializer (make-instance 'he-initializer)))
 
 (time
  (loop repeat 10000 do
@@ -26,6 +27,11 @@
      (set-mini-batch! mnist-dataset rand batch-size)
      (set-mini-batch! mnist-target  rand batch-size)
      (train mnist-network mnist-dataset mnist-target))))
+
+;;; Momentum optimizer
+
+(setf (optimizer mnist-network)
+      (make-momentum-sgd 0.1 0.9 mnist-network))
 
 ;; CPU
 
@@ -131,26 +137,32 @@
 (defparameter train-acc-list nil)
 (defparameter test-acc-list nil)
 
-;; (loop for i from 1 to 100000 do
-;;   (let* ((batch-size (batch-size mnist-network))
-;;          (rand (random (- 60000 batch-size))))
-;;     (set-mini-batch! mnist-dataset rand batch-size)
-;;     (set-mini-batch! mnist-target  rand batch-size)
-;;     (train mnist-network mnist-dataset mnist-target)
-;;     (when (zerop (mod i 600))
-;;       (let ((train-acc (accuracy mnist-network mnist-dataset mnist-target))
-;;             (test-acc  (accuracy mnist-network mnist-dataset-test mnist-target-test)))
-;;         (format t "cycle: ~A~,15Ttrain-acc: ~A~,10Ttest-acc: ~A~%" i train-acc test-acc)
-;;         (push train-acc train-acc-list)
-;;         (push test-acc  test-acc-list)))))
+(defparameter train-acc-list2 nil)
+(defparameter test-acc-list2 nil)
 
-;; (clgp:plots (list (reverse train-acc-list)
-;;                   (reverse test-acc-list))
-;;             :main "MNIST, 256->Relu->256"
-;;             :title-list '("train" "test")
-;;             :x-label "n-epoch"
-;;             :y-label "accuracy"
-;;             :y-range '(0.9 1.015))
+(with-cuda* ()
+  (loop for i from 1 to 100000 do
+    (let* ((batch-size (batch-size mnist-network))
+           (rand (random (- 60000 batch-size))))
+      (set-mini-batch! mnist-dataset rand batch-size)
+      (set-mini-batch! mnist-target  rand batch-size)
+      (train mnist-network mnist-dataset mnist-target)
+      (when (zerop (mod i 600))
+        (let ((train-acc (accuracy mnist-network mnist-dataset mnist-target))
+              (test-acc  (accuracy mnist-network mnist-dataset-test mnist-target-test)))
+          (format t "cycle: ~A~,15Ttrain-acc: ~A~,10Ttest-acc: ~A~%" i train-acc test-acc)
+          (push train-acc train-acc-list2)
+          (push test-acc  test-acc-list2))))))
+
+(clgp:plots (list (reverse train-acc-list)
+                  (reverse test-acc-list)
+                  (reverse train-acc-list2)
+                  (reverse test-acc-list2))
+            :title-list '("train(sgd)" "test(sgd)" "train(momentum)" "test(momentum)")
+            :x-label "n-epoch"
+            :y-label "accuracy"
+            :y-range '(0.92 1.03)
+            )
 
 ;;  6.179 seconds of real time for set-gradient!      ; python: 7.0sec
 ;;  22.230 seconds of real time for set-mini-batch!   ; python: 0.55sec
@@ -180,7 +192,7 @@
                   (sigmoid :in 50)
                   (affine  :in 50  :out 10)
                   (softmax :in 10))
-                100))
+                :batch-size 100))
 
 ;; (time
 ;;  (loop for i from 1 to 10000 do
