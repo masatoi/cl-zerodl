@@ -45,6 +45,10 @@
   input-dimensions output-dimensions
   forward-out backward-out)
 
+(define-class updatable-layer (layer)
+  updatable-parameters
+  gradients)
+
 (defgeneric forward (layer &rest inputs))
 (defgeneric backward (layer dout))
 
@@ -103,7 +107,7 @@
 
 ;; 5.6 Affine
 
-(define-class affine-layer (layer)
+(define-class affine-layer (updatable-layer)
   x weight bias)
 
 ;; x: (batch-size, in-size)
@@ -112,18 +116,21 @@
 ;; b: (out-size)
 
 (defun make-affine-layer (input-dimensions output-dimensions)
-  (let ((weight-dimensions (list (cadr input-dimensions) (cadr output-dimensions)))
-        (bias-dimension (cadr output-dimensions)))
-    (make-instance 'affine-layer
-                   :input-dimensions  input-dimensions
-                   :output-dimensions output-dimensions
-                   :forward-out  (make-mat output-dimensions)
-                   :backward-out (list (make-mat input-dimensions)  ; dX
-                                       (make-mat weight-dimensions) ; dW
-                                       (make-mat bias-dimension))   ; db
-                   :x      (make-mat input-dimensions)
-                   :weight (make-mat weight-dimensions)
-                   :bias   (make-mat bias-dimension))))
+  (let* ((weight-dimensions (list (cadr input-dimensions) (cadr output-dimensions)))
+         (bias-dimension (cadr output-dimensions))
+         (layer (make-instance 'affine-layer
+                               :input-dimensions  input-dimensions
+                               :output-dimensions output-dimensions
+                               :forward-out  (make-mat output-dimensions)
+                               :backward-out (list (make-mat input-dimensions)  ; dX
+                                                   (make-mat weight-dimensions) ; dW
+                                                   (make-mat bias-dimension))   ; db
+                               :x      (make-mat input-dimensions)
+                               :weight (make-mat weight-dimensions)
+                               :bias   (make-mat bias-dimension))))
+    (setf (updatable-parameters layer) (list (weight layer) (bias layer))
+          (gradients layer)            (cdr (backward-out layer)))
+    layer))
 
 (defmethod forward ((layer affine-layer) &rest inputs)
   (let* ((x (car inputs))
@@ -142,14 +149,14 @@
     (sum! dout db :axis 0)                                 ; db
     (backward-out layer)))
 
-(defun average! (a batch-size-tmp)
-  (sum! a batch-size-tmp :axis 1)
-  (scal! (/ 1.0 (mat-dimension a 1)) batch-size-tmp))
+(defun average! (a batch-size-tmp &key (axis 0))
+  (sum! a batch-size-tmp :axis axis)
+  (scal! (/ 1.0 (mat-dimension a axis)) batch-size-tmp))
 
 (defun softmax! (a result batch-size-tmp &key (avoid-overflow-p t))
   ;; In order to avoid overflow, subtract average value for each column.
   (when avoid-overflow-p
-    (average! a batch-size-tmp)
+    (average! a batch-size-tmp :axis 1)
     (fill! 1.0 result)
     (scale-rows! batch-size-tmp result)
     (axpy! -1.0 result a)) ; a - average(a)
@@ -216,37 +223,24 @@
 (defmethod update! ((optimizer sgd) parameter gradient)
   (axpy! (- (learning-rate optimizer)) gradient parameter))
 
+;; Momentum SGD
 (define-class momentum-sgd (sgd)
-  velocities momentum)
+  velocities decay-rate)
 
-;; (defparameter *parameters*
-;;   (list (weight (aref (layers mnist-network) 0))
-;;         (bias   (aref (layers mnist-network) 0))
-;;         (weight (aref (layers mnist-network) 2))
-;;         (bias   (aref (layers mnist-network) 2))))
-
-;; (make-momentum-sgd 0.01 1.0 *parameters*)
-
-(defun make-momentum-sgd (learning-rate momentum network)
+(defun make-momentum-sgd (learning-rate decay-rate network)
   (let ((opt (make-instance 'momentum-sgd
                             :learning-rate learning-rate
-                            :momentum momentum))
-        (updatable-params
-          (flatten (map 'list
-              (lambda (layer)
-                (list (weight layer) (bias layer)))
-              (remove-if-not (lambda (layer) (eq (type-of layer) 'affine-layer))
-                             (layers network))))))
-    (dolist (param updatable-params)
-      (setf (getf (velocities opt) param)
-            (make-mat (mat-dimensions param) :initial-element 0.0)))
+                            :velocities (make-hash-table :test 'eq)
+                            :decay-rate decay-rate)))
+    (do-updatable-layer (layer network)
+      (dolist (param (updatable-parameters layer))
+        (setf (gethash param (velocities opt))
+              (make-mat (mat-dimensions param) :initial-element 0.0))))
     opt))
 
-;; (defparameter *opt* (make-momentum-sgd 0.01 0.9 *parameters*))
-
 (defmethod update! ((optimizer momentum-sgd) parameter gradient)
-  (let ((velocity (getf (velocities optimizer) parameter)))
-    (scal! (momentum optimizer) velocity)
+  (let ((velocity (gethash parameter (velocities optimizer))))
+    (scal! (decay-rate optimizer) velocity)
     (axpy! (- (learning-rate optimizer)) gradient velocity)
     (axpy! 1.0 velocity parameter)))
 
@@ -261,8 +255,12 @@
 
 (define-class xavier-initializer (initializer))
 
+;; (defmethod initialize! ((initializer xavier-initializer) parameter)
+;;   (gaussian-random! parameter :stddev (/ 1.0 (sqrt (mat-dimension parameter 0)))))
+
 (defmethod initialize! ((initializer xavier-initializer) parameter)
-  (gaussian-random! parameter :stddev (/ 1.0 (sqrt (mat-dimension parameter 0)))))
+  (gaussian-random! parameter :stddev (sqrt (/ 2.0 (+ (mat-dimension parameter 0)
+                                                      (mat-dimension parameter 1))))))
 
 (define-class he-initializer (initializer))
 
@@ -281,6 +279,7 @@
         (output-dimensions (list batch-size (getf (cdr spec) :out))))
     (ecase (car spec)
       (affine  (make-affine-layer  input-dimensions output-dimensions))
+      (batch-norm  (make-batch-normalization-layer input-dimensions))
       (relu    (make-relu-layer    input-dimensions))
       (sigmoid (make-sigmoid-layer input-dimensions))
       (softmax (make-softmax/loss-layer input-dimensions)))))
@@ -290,12 +289,17 @@
     (when (eq (type-of ,layer) 'affine-layer)
       ,@body)))
 
+(defmacro do-updatable-layer ((layer network) &body body)
+  `(loop for ,layer across (layers ,network) do
+    (when (slot-exists-p ,layer 'updatable-parameters)
+      ,@body)))
+
 (defun update-network! (network)
-  (do-affine-layer (layer network)
-    (bind (((dx dW db) (backward-out layer)))
-      (declare (ignore dx))
-      (update! (optimizer network) (weight layer) dW)
-      (update! (optimizer network) (bias layer)   db))))
+  (do-updatable-layer (layer network)
+    (mapc (lambda (param grad)
+            (update! (optimizer network) param grad))
+          (updatable-parameters layer)
+          (gradients layer))))
 
 (defun initialize-network! (network)
   (do-affine-layer (layer network)
@@ -425,3 +429,126 @@
                   for tgt  across (max-position-column (mat-to-array target))
                   count (= pred tgt))))
     (* (/ cnt len) 1.0)))
+
+;;; Batch Normalization
+
+(define-class batch-normalization-layer (updatable-layer)
+  epsilon beta gamma var sqrtvar ivar x^ xmu tmp)
+
+(defun make-batch-normalization-layer (input-dimensions &key (epsilon 1.0e-6))
+  (let* ((dim (cadr input-dimensions))
+         (layer (make-instance 'batch-normalization-layer
+                               :input-dimensions  input-dimensions
+                               :output-dimensions input-dimensions
+                               :forward-out  (make-mat input-dimensions)
+                               :backward-out (list (make-mat input-dimensions) ; dX
+                                                   (make-mat dim)              ; dβ
+                                                   (make-mat dim))             ; dγ
+                               :epsilon epsilon
+                               :beta    (make-mat dim :initial-element 0.0)
+                               :gamma   (make-mat dim :initial-element 1.0)
+                               :var     (make-mat dim)
+                               :sqrtvar (make-mat dim)
+                               :ivar    (make-mat dim)
+                               :x^      (make-mat input-dimensions)
+                               :xmu     (make-mat input-dimensions)
+                               :tmp     (make-mat input-dimensions))))
+    (setf (updatable-parameters layer) (list (beta layer) (gamma layer))
+          (gradients layer)            (cdr (backward-out layer)))
+    layer))
+
+(defmethod forward ((layer batch-normalization-layer) &rest inputs)
+  (let ((x       (car inputs))
+        (epsilon (epsilon layer))
+        (beta    (beta    layer))
+        (gamma   (gamma   layer))
+        (var     (var     layer))
+        (sqrtvar (sqrtvar layer))
+        (ivar    (ivar    layer))
+        (x^      (x^      layer))
+        (xmu     (xmu     layer))
+        (tmp     (tmp     layer))
+        (out     (forward-out layer)))
+    (average! x (ivar layer)) ; use ivar as tmp
+    ;; calc xmu
+    (fill! 1.0 xmu)
+    (scale-columns! ivar xmu)
+    (axpy! -1.0 x xmu)
+    (scal! -1.0 xmu)
+    ;; calc var
+    (copy! xmu x^) ; use x^ as tmp
+    (.square! x^)
+    (average! x^ var)
+    ;; calc sqrtvar
+    (copy! var sqrtvar)
+    (.+! epsilon sqrtvar)
+    (.sqrt! sqrtvar)
+    ;; calc ivar
+    (copy! sqrtvar ivar)
+    (.inv! ivar)
+    ;; calc x^
+    (fill! 1.0 x^)
+    (scale-columns! ivar x^)
+    (.*! xmu x^)
+    ;; calc output
+    (fill! 1.0 tmp)
+    (scale-columns! gamma tmp)
+    (.*! x^ tmp)
+    (fill! 1.0 out)
+    (scale-columns! beta out)
+    (axpy! 1.0 tmp out)))
+
+(defmethod backward ((layer batch-normalization-layer) dout)
+  (bind (((dx dbeta dgamma) (backward-out layer))
+         (epsilon (epsilon layer))
+         (gamma   (gamma   layer))
+         (var     (var     layer))
+         (sqrtvar (sqrtvar layer))
+         (ivar    (ivar    layer))
+         (x^      (x^      layer))
+         (xmu     (xmu     layer))
+         (tmp     (tmp     layer)))
+    ;; calc dx^ -> tmp
+    (fill! 1.0 tmp)
+    (scale-columns! gamma tmp)
+    (.*! dout tmp)
+    ;; calc dxmu1 -> dx
+    (fill! 1.0 dx)
+    (scale-columns! ivar dx)
+    (.*! tmp dx)
+    ;; calc divar -> dbeta
+    (.*! xmu tmp)
+    (sum! tmp dbeta :axis 0)
+    ;; calc dsqrtvar -> dbeta
+    (copy! sqrtvar dgamma)
+    (.square! dgamma)
+    (.inv! dgamma)
+    (geem! -1.0 dbeta dgamma 0.0 dbeta)
+    ;; calc dvar -> dbeta
+    (copy! var dgamma)
+    (.+! epsilon dgamma)
+    (.sqrt! dgamma)
+    (.inv! dgamma)
+    (geem! 0.5 dbeta dgamma 0.0 dbeta)
+    ;; calc dsq -> tmp
+    (fill! 1.0 tmp)
+    (scale-columns! dbeta tmp)
+    (scal! (/ 1.0 (mat-dimension tmp 0)) tmp)
+    ;; calc dxmu2 -> tmp
+    (geem! 2.0 xmu tmp 0.0 tmp)
+    ;; calc dx1 -> dx
+    (axpy! 1.0 tmp dx)
+    ;; calc -dmu -> dbeta
+    (sum! dx dbeta :axis 0)
+    ;; calc dx2 -> tmp
+    (fill! 1.0 tmp)
+    (scale-columns! dbeta tmp)
+    (scal! (/ -1.0 (mat-dimension tmp 0)) tmp)
+    ;; calc dx
+    (axpy! 1.0 tmp dx)
+    ;; calc dbeta
+    (sum! dout dbeta :axis 0)
+    ;; calc dgamma
+    (geem! 1.0 dout x^ 0.0 tmp)
+    (sum! tmp dgamma :axis 0)
+    dx))
