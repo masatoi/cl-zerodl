@@ -213,90 +213,6 @@
     (axpy! -1.0 target out)
     (scal! (/ 1.0 batch-size) out)))
 
-;;; Optimizer
-
-(define-class optimizer ())
-
-(define-class sgd (optimizer)
-  (learning-rate 0.1))
-
-(defmethod update! ((optimizer sgd) parameter gradient)
-  (axpy! (- (learning-rate optimizer)) gradient parameter))
-
-;; Momentum SGD
-(define-class momentum-sgd (sgd)
-  velocities decay-rate)
-
-(defun make-momentum-sgd (learning-rate decay-rate network)
-  (let ((opt (make-instance 'momentum-sgd
-                            :learning-rate learning-rate
-                            :velocities (make-hash-table :test 'eq)
-                            :decay-rate decay-rate)))
-    (do-updatable-layer (layer network)
-      (dolist (param (updatable-parameters layer))
-        (setf (gethash param (velocities opt))
-              (make-mat (mat-dimensions param) :initial-element 0.0))))
-    opt))
-
-(defmethod update! ((optimizer momentum-sgd) parameter gradient)
-  (let ((velocity (gethash parameter (velocities optimizer))))
-    (scal! (decay-rate optimizer) velocity)
-    (axpy! (- (learning-rate optimizer)) gradient velocity)
-    (axpy! 1.0 velocity parameter)))
-
-;; Adagrad
-(define-class adagrad (sgd)
-  velocities decay-rate tmps epsilon)
-
-(defun make-adagrad (learning-rate decay-rate network &key (epsilon 1.0e-6))
-  (let ((opt (make-instance 'adagrad
-                            :learning-rate learning-rate
-                            :velocities (make-hash-table :test 'eq)
-                            :decay-rate decay-rate
-                            :tmps (make-hash-table :test 'eq)
-                            :epsilon epsilon)))
-    (do-updatable-layer (layer network)
-      (dolist (param (updatable-parameters layer))
-        (setf (gethash param (velocities opt))
-              (make-mat (mat-dimensions param) :initial-element 0.0)
-              (gethash param (tmps opt))
-              (make-mat (mat-dimensions param) :initial-element 0.0))))
-    opt))
-
-(defmethod update! ((optimizer adagrad) parameter gradient)
-  (let ((velocity (gethash parameter (velocities optimizer)))
-        (tmp (gethash parameter (tmps optimizer))))
-    (geem! 1.0 gradient gradient 1.0 velocity)
-    (copy! velocity tmp)
-    (.+! (epsilon optimizer) tmp)
-    (.sqrt! tmp)
-    (.inv! tmp)
-    (.*! gradient tmp)
-    (axpy! (- (learning-rate optimizer)) tmp parameter)))
-
-;;; Initializer
-(define-class initializer ())
-
-(define-class gaussian-initializer (initializer)
-  (weight-init-std 0.01))
-
-(defmethod initialize! ((initializer gaussian-initializer) parameter)
-  (gaussian-random! parameter :stddev (weight-init-std initializer)))
-
-(define-class xavier-initializer (initializer))
-
-;; (defmethod initialize! ((initializer xavier-initializer) parameter)
-;;   (gaussian-random! parameter :stddev (/ 1.0 (sqrt (mat-dimension parameter 0)))))
-
-(defmethod initialize! ((initializer xavier-initializer) parameter)
-  (gaussian-random! parameter :stddev (sqrt (/ 2.0 (+ (mat-dimension parameter 0)
-                                                      (mat-dimension parameter 1))))))
-
-(define-class he-initializer (initializer))
-
-(defmethod initialize! ((initializer he-initializer) parameter)
-  (gaussian-random! parameter :stddev (sqrt (/ 2.0 (mat-dimension parameter 0)))))
-
 ;;; Network operations
 
 ;;; Network
@@ -376,6 +292,119 @@
     (loop for i from (- (length layers) 2) downto 0 do
       (let ((layer (svref layers i)))
         (setf dout (backward layer (if (listp dout) (car dout) dout)))))))
+
+;;; Optimizer
+
+(define-class optimizer ())
+
+(define-class sgd (optimizer)
+  (learning-rate 0.1))
+
+(defmethod update! ((optimizer sgd) parameter gradient)
+  (axpy! (- (learning-rate optimizer)) gradient parameter))
+
+;; Momentum SGD
+(define-class momentum-sgd (sgd)
+  velocities decay-rate)
+
+(defun make-momentum-sgd (learning-rate decay-rate network)
+  (let ((opt (make-instance 'momentum-sgd
+                            :learning-rate learning-rate
+                            :velocities (make-hash-table :test 'eq)
+                            :decay-rate decay-rate)))
+    (do-updatable-layer (layer network)
+      (dolist (param (updatable-parameters layer))
+        (setf (gethash param (velocities opt))
+              (make-mat (mat-dimensions param) :initial-element 0.0))))
+    opt))
+
+(defmethod update! ((optimizer momentum-sgd) parameter gradient)
+  (let ((velocity (gethash parameter (velocities optimizer))))
+    (scal! (decay-rate optimizer) velocity)
+    (axpy! -1.0 gradient velocity)
+    (axpy! (learning-rate optimizer) velocity parameter)))
+
+;; AggMo (Aggregated Momentum)
+;; https://arxiv.org/pdf/1804.00325.pdf
+
+(define-class aggmo (sgd)
+  velocity-hash-list decay-rate-list)
+
+(defun make-aggmo (learning-rate decay-rate-list network)
+  (let ((opt (make-instance 'aggmo
+                            :learning-rate learning-rate
+                            :velocity-hash-list (loop repeat (length decay-rate-list)
+                                                      collect (make-hash-table :test 'eq))
+                            :decay-rate-list decay-rate-list)))
+    (do-updatable-layer (layer network)
+      (dolist (param (updatable-parameters layer))
+        (loop for decay-rate in decay-rate-list
+              for velocity-hash in (velocity-hash-list opt)
+              do (setf (gethash param velocity-hash)
+                       (make-mat (mat-dimensions param) :initial-element 0.0)))))
+    opt))
+
+(defmethod update! ((optimizer aggmo) parameter gradient)
+  (let* ((decay-list (decay-rate-list optimizer))
+         (v-list (mapcar (lambda (hash) (gethash parameter hash))
+                         (velocity-hash-list optimizer)))
+         (gamma/K (/ (learning-rate optimizer) (length decay-list))))
+    (loop for v in v-list
+          for decay in decay-list
+          do (scal! decay v)
+             (axpy! -1.0 gradient v))
+    (dolist (v v-list)
+      (axpy! gamma/K v parameter))))
+
+;; Adagrad
+(define-class adagrad (sgd)
+  velocities decay-rate tmps epsilon)
+
+(defun make-adagrad (learning-rate decay-rate network &key (epsilon 1.0e-6))
+  (let ((opt (make-instance 'adagrad
+                            :learning-rate learning-rate
+                            :velocities (make-hash-table :test 'eq)
+                            :decay-rate decay-rate
+                            :tmps (make-hash-table :test 'eq)
+                            :epsilon epsilon)))
+    (do-updatable-layer (layer network)
+      (dolist (param (updatable-parameters layer))
+        (setf (gethash param (velocities opt))
+              (make-mat (mat-dimensions param) :initial-element 0.0)
+              (gethash param (tmps opt))
+              (make-mat (mat-dimensions param) :initial-element 0.0))))
+    opt))
+
+(defmethod update! ((optimizer adagrad) parameter gradient)
+  (let ((velocity (gethash parameter (velocities optimizer)))
+        (tmp (gethash parameter (tmps optimizer))))
+    (geem! 1.0 gradient gradient 1.0 velocity)
+    (copy! velocity tmp)
+    (.+! (epsilon optimizer) tmp)
+    (.sqrt! tmp)
+    (.inv! tmp)
+    (.*! gradient tmp)
+    (axpy! (- (learning-rate optimizer)) tmp parameter)))
+
+;;; Initializer
+(define-class initializer ())
+
+(define-class gaussian-initializer (initializer)
+  (weight-init-std 0.01))
+
+(defmethod initialize! ((initializer gaussian-initializer) parameter)
+  (gaussian-random! parameter :stddev (weight-init-std initializer)))
+
+(define-class xavier-initializer (initializer))
+
+(defmethod initialize! ((initializer xavier-initializer) parameter)
+  (gaussian-random! parameter :stddev (sqrt (/ 2.0 (+ (mat-dimension parameter 0)
+                                                      (mat-dimension parameter 1))))))
+
+(define-class he-initializer (initializer))
+
+(defmethod initialize! ((initializer he-initializer) parameter)
+  (gaussian-random! parameter :stddev (sqrt (/ 2.0 (mat-dimension parameter 0)))))
 
 ;;; Read data
 
@@ -582,3 +611,4 @@
     (geem! 1.0 dout x^ 0.0 tmp)
     (sum! tmp dgamma :axis 0)
     dx))
+

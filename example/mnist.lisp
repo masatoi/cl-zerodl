@@ -13,25 +13,32 @@
   (defparameter mnist-target-test target))
 
 (defparameter mnist-network
-  (make-network '((affine  :in 784 :out 256)
-                  (relu    :in 256)
-                  (affine  :in 256  :out 10)
+  (make-network '((affine  :in 784 :out 50)
+                  (batch-norm :in 50)
+                  (relu    :in 50)
+                  (affine  :in 50  :out 10)
                   (softmax :in 10))
                 :batch-size 100
                 :initializer (make-instance 'he-initializer)))
-
-(time
- (loop repeat 10000 do
-   (let* ((batch-size (batch-size mnist-network))
-          (rand (random (- 60000 batch-size))))
-     (set-mini-batch! mnist-dataset rand batch-size)
-     (set-mini-batch! mnist-target  rand batch-size)
-     (train mnist-network mnist-dataset mnist-target))))
 
 ;;; Momentum optimizer
 
 (setf (optimizer mnist-network)
       (make-momentum-sgd 0.1 0.9 mnist-network))
+
+(setf (optimizer mnist-network)
+      (make-adagrad 0.01 0.9 mnist-network))
+
+(setf (optimizer mnist-network)
+      (make-aggmo 0.01 '(0.0 0.9 0.99) mnist-network))
+
+(time
+ (loop repeat (* 600 15) do
+   (let* ((batch-size (batch-size mnist-network))
+          (rand (random (- 60000 batch-size))))
+     (set-mini-batch! mnist-dataset rand batch-size)
+     (set-mini-batch! mnist-target  rand batch-size)
+     (train mnist-network mnist-dataset mnist-target))))
 
 ;; CPU
 
@@ -140,8 +147,11 @@
 (defparameter train-acc-list2 nil)
 (defparameter test-acc-list2 nil)
 
+(defparameter train-acc-list3 nil)
+(defparameter test-acc-list3 nil)
+
 (with-cuda* ()
-  (loop for i from 1 to 100000 do
+  (loop for i from 1 to (* 600 150) do
     (let* ((batch-size (batch-size mnist-network))
            (rand (random (- 60000 batch-size))))
       (set-mini-batch! mnist-dataset rand batch-size)
@@ -157,12 +167,18 @@
 (clgp:plots (list (reverse train-acc-list)
                   (reverse test-acc-list)
                   (reverse train-acc-list2)
-                  (reverse test-acc-list2))
-            :title-list '("train(sgd)" "test(sgd)" "train(momentum)" "test(momentum)")
+                  (reverse test-acc-list2)
+                  )
+            :title-list '("train(adagrad)" "test(adagrad)"
+                          "train(momentum)" "test(momentum)"
+                          
+                          ;;"train(momentum)" "test(momentum)"
+                          ;; "train(SGD+BN)" "test(SGD+BN)"
+                          )
             :x-label "n-epoch"
             :y-label "accuracy"
-            :y-range '(0.92 1.03)
-            )
+            :y-range '(0.96 1.015))
+            :output "/home/wiz/tmp/mnist-momentun-adagrad.png")
 
 ;;  6.179 seconds of real time for set-gradient!      ; python: 7.0sec
 ;;  22.230 seconds of real time for set-mini-batch!   ; python: 0.55sec
