@@ -244,6 +244,36 @@
     (axpy! (- (learning-rate optimizer)) gradient velocity)
     (axpy! 1.0 velocity parameter)))
 
+;; Adagrad
+(define-class adagrad (sgd)
+  velocities decay-rate tmps epsilon)
+
+(defun make-adagrad (learning-rate decay-rate network &key (epsilon 1.0e-6))
+  (let ((opt (make-instance 'adagrad
+                            :learning-rate learning-rate
+                            :velocities (make-hash-table :test 'eq)
+                            :decay-rate decay-rate
+                            :tmps (make-hash-table :test 'eq)
+                            :epsilon epsilon)))
+    (do-updatable-layer (layer network)
+      (dolist (param (updatable-parameters layer))
+        (setf (gethash param (velocities opt))
+              (make-mat (mat-dimensions param) :initial-element 0.0)
+              (gethash param (tmps opt))
+              (make-mat (mat-dimensions param) :initial-element 0.0))))
+    opt))
+
+(defmethod update! ((optimizer adagrad) parameter gradient)
+  (let ((velocity (gethash parameter (velocities optimizer)))
+        (tmp (gethash parameter (tmps optimizer))))
+    (geem! 1.0 gradient gradient 1.0 velocity)
+    (copy! velocity tmp)
+    (.+! (epsilon optimizer) tmp)
+    (.sqrt! tmp)
+    (.inv! tmp)
+    (.*! gradient tmp)
+    (axpy! (- (learning-rate optimizer)) tmp parameter)))
+
 ;;; Initializer
 (define-class initializer ())
 
