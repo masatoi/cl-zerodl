@@ -1,2 +1,34 @@
-* ゼロから作るDeep Learningのサンプルコード (Common Lisp版)
+* cl-zerodl
 
+** Install
+
+#+BEGIN_SRC 
+$ sudo apt install libblas-dev liblapack-dev
+$ ros install cl-cuda melisgl/mgl-mat masatoi/cl-zerodl
+#+END_SRC
+
+In config files of common lisp implementations such ~/.sbclrc,
+
+#+BEGIN_SRC lisp
+(defvar *lla-configuration*
+  '(:libraries ("/usr/lib/x86_64-linux-gnu/libblas.so.3")))
+#+END_SRC
+
+*** for openblas
+
+#+BEGIN_SRC 
+$ sudo apt install libopenblas-base libopenblas-dev
+$ locate libblas.so.3
+/usr/lib/x86_64-linux-gnu/openblas/libblas.so.3
+#+END_SRC
+
+In ~/.sbclrc,
+
+#+BEGIN_SRC lisp
+(defvar *lla-configuration*
+  '(:libraries ("/usr/lib/x86_64-linux-gnu/openblas/libblas.so.3")))
+#+END_SRC
+
+** Usage
+
+See example/mnist.lisp
