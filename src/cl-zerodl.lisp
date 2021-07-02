@@ -213,6 +213,141 @@
     (axpy! -1.0 target out)
     (scal! (/ 1.0 batch-size) out)))
 
+;;; 7.2 conv2d layer
+
+(defun reshape-flatten! (mat)
+  (let ((dims (mat-dimensions mat)))
+    (reshape! mat (list (car dims) (reduce #'* (cdr dims))))))
+
+(define-class conv2d-layer (updatable-layer)
+  X filter anchor stride)
+
+;; X: (batch-size, in1-size, in2-size)
+;; Y: (batch-size, out1-size, out2-size)
+;; W: (filter-x, filter-y)
+
+(defun make-conv2d-layer (input-dimensions filter-size stride-size)
+  (assert (and (listp input-dimensions) (= (length input-dimensions) 3)))
+  (check-type filter-size positive-integer)
+  (assert (oddp filter-size))
+  (check-type stride-size positive-integer)
+  (assert (and (< stride-size (second input-dimensions))
+               (< stride-size (third input-dimensions))))
+
+  (let ((anchor-size (/ (1- filter-size) 2)))
+    (flet ((out-dim (in-dim)
+             (1+ (/ (+ in-dim (* anchor-size 2) (- filter-size)) stride-size))))
+      (let* ((out1 (out-dim (second input-dimensions)))
+             (out2 (out-dim (third input-dimensions)))
+             (layer (make-instance 'conv2d-layer
+                                   :input-dimensions  input-dimensions
+                                   :output-dimensions (list (first input-dimensions) out1 out2)
+                                   :forward-out (make-mat (list (first input-dimensions) (* out1 out2)))
+                                   :backward-out (list (make-mat (list (first input-dimensions) ; dX
+                                                                       (* (second input-dimensions)
+                                                                          (third input-dimensions))))
+                                                       (make-mat (list filter-size filter-size))) ; dW
+                                   :X      (make-mat input-dimensions)
+                                   :filter (make-mat (list filter-size filter-size))
+                                   :anchor (list anchor-size anchor-size)
+                                   :stride (list stride-size stride-size))))
+        (setf (updatable-parameters layer) (list (filter layer))
+              (gradients layer)            (cdr (backward-out layer)))
+        layer))))
+
+(defmethod forward ((layer conv2d-layer) &rest inputs)
+  (let* ((X (car inputs))
+         (W (filter layer))
+         (Y (forward-out layer)))
+
+    (reshape! X (input-dimensions layer))
+    (copy! X (X layer))
+    (reshape! Y (output-dimensions layer))
+    
+    (fill! 0.0 Y)
+    (convolve! X W Y :start '(0 0) :stride (stride layer) :anchor (anchor layer) :batched t)
+
+    (reshape-flatten! X)
+    (reshape-flatten! Y)))
+
+(defmethod backward ((layer conv2d-layer) dout)
+  (bind (((dX dW) (backward-out layer))
+         (X (X layer))
+         (W (filter layer)))
+
+    (reshape! dX (input-dimensions layer))
+    (reshape! dout (output-dimensions layer))
+
+    (fill! 0.0 dX)
+    (fill! 0.0 dW)
+
+    (derive-convolve! X dX W dW dout
+                      :start '(0 0) :stride (stride layer) :anchor (anchor layer) :batched t)
+
+    (reshape-flatten! dX)
+    (reshape-flatten! dout)
+    
+    (backward-out layer)))
+
+;;; 7.3 max-pool layer
+
+(define-class max-pool-layer (layer)
+  X pool-dimensions)
+
+(defun make-max-pool-layer (input-dimensions output-dimensions pool-dimensions)
+  (assert (and (listp input-dimensions) (= (length input-dimensions) 3)))
+  (assert (and (listp output-dimensions) (= (length output-dimensions) 3)))
+  (assert (and (listp pool-dimensions) (= (length pool-dimensions) 2)))
+
+  (make-instance 'max-pool-layer
+                 :input-dimensions  input-dimensions
+                 :output-dimensions output-dimensions
+                 :forward-out (make-mat output-dimensions)
+                 :backward-out (list (make-mat input-dimensions))
+                 :X      (make-mat input-dimensions)
+                 :pool-dimensions pool-dimensions))
+
+(defmethod forward ((layer max-pool-layer) &rest inputs)
+  (let* ((X (car inputs))
+         (Y (forward-out layer)))
+
+    (reshape! X (input-dimensions layer))
+    (copy! X (X layer))
+    (reshape! Y (output-dimensions layer))
+    
+    (fill! 0.0 Y)
+    (max-pool! X Y :start '(0 0)
+                   :stride (pool-dimensions layer)
+                   :anchor '(0 0)
+                   :batched t
+                   :pool-dimensions (pool-dimensions layer))
+
+    (reshape-flatten! X)
+    (reshape-flatten! Y)))
+
+(defmethod backward ((layer max-pool-layer) dout)
+  (bind (((dX) (backward-out layer))
+         (X (X layer))
+         (Y (forward-out layer)))
+
+    (reshape! dX (input-dimensions layer))
+    (reshape! dout (output-dimensions layer))
+    (reshape! Y (output-dimensions layer))
+
+    (fill! 0.0 dX)
+
+    (derive-max-pool! X dX Y dout :start '(0 0)
+                                  :stride (pool-dimensions layer)
+                                  :anchor '(0 0)
+                                  :batched t
+                                  :pool-dimensions (pool-dimensions layer))
+    
+    (reshape-flatten! dX)
+    (reshape-flatten! dout)
+    (reshape-flatten! Y)
+
+    (backward-out layer)))
+
 ;;; Network operations
 
 ;;; Network
@@ -225,14 +360,16 @@
         (output-dimensions (list batch-size (getf (cdr spec) :out))))
     (ecase (car spec)
       (affine  (make-affine-layer  input-dimensions output-dimensions))
+      ;; (conv2d (make-conv2d-layer input-dimensions ))
       (batch-norm  (make-batch-normalization-layer input-dimensions))
+      (dropout  (make-dropout-layer input-dimensions))
       (relu    (make-relu-layer    input-dimensions))
       (sigmoid (make-sigmoid-layer input-dimensions))
       (softmax (make-softmax/loss-layer input-dimensions)))))
 
-(defmacro do-affine-layer ((layer network) &body body)
+(defmacro do-layer ((layer network type) &body body)
   `(loop for ,layer across (layers ,network) do
-    (when (eq (type-of ,layer) 'affine-layer)
+    (when (eq (type-of ,layer) (quote ,type))
       ,@body)))
 
 (defmacro do-updatable-layer ((layer network) &body body)
@@ -248,8 +385,10 @@
           (gradients layer))))
 
 (defun initialize-network! (network)
-  (do-affine-layer (layer network)
-    (initialize! (initializer network) (weight layer))))
+  (do-layer (layer network affine-layer)
+    (initialize! (initializer network) (weight layer)))
+  (do-layer (layer network conv2d-layer)
+    (initialize! (initializer network) (filter layer))))
 
 (defun make-network (layer-specs
                      &key (batch-size 100)
@@ -260,6 +399,19 @@
                   :layers (map 'vector
                                (lambda (spec) (spec->layer spec batch-size))
                                layer-specs)
+                  :batch-size  batch-size
+                  :initializer initializer
+                  :optimizer   optimizer)))
+    (initialize-network! network)
+    network))
+
+(defun make-network (layers
+                     &key (batch-size 100)
+                       (initializer (make-instance 'gaussian-initializer))
+                       (optimizer   (make-instance 'sgd)))
+  (let ((network (make-instance
+                  'network
+                  :layers layers
                   :batch-size  batch-size
                   :initializer initializer
                   :optimizer   optimizer)))
@@ -291,7 +443,17 @@
     (setf dout (backward (last-layer network) 1.0))
     (loop for i from (- (length layers) 2) downto 0 do
       (let ((layer (svref layers i)))
-        (setf dout (backward layer (if (listp dout) (car dout) dout)))))))
+        (setf dout (backward layer (if (listp dout) (car dout) dout)))))
+    ;; ;; weight-decay
+    ;; (do-layer (layer network affine-layer)
+    ;;   (let ((dW (cadr (backward-out layer))))
+    ;;     (axpy! 0.00001 (weight layer) dW))
+    ;;   )
+    ))
+
+(defun weight-decay-network! (network regularization-rate)
+  (do-layer (layer network affine-layer)
+    (axpy! regularization-rate (weight layer) (weight layer))))
 
 ;;; Optimizer
 
@@ -321,8 +483,8 @@
 (defmethod update! ((optimizer momentum-sgd) parameter gradient)
   (let ((velocity (gethash parameter (velocities optimizer))))
     (scal! (decay-rate optimizer) velocity)
-    (axpy! -1.0 gradient velocity)
-    (axpy! (learning-rate optimizer) velocity parameter)))
+    (axpy! (- (learning-rate optimizer)) gradient velocity)
+    (axpy! 1.0 velocity parameter)))
 
 ;; AggMo (Aggregated Momentum)
 ;; https://arxiv.org/pdf/1804.00325.pdf
@@ -345,16 +507,15 @@
     opt))
 
 (defmethod update! ((optimizer aggmo) parameter gradient)
-  (let* ((decay-list (decay-rate-list optimizer))
-         (v-list (mapcar (lambda (hash) (gethash parameter hash))
-                         (velocity-hash-list optimizer)))
-         (gamma/K (/ (learning-rate optimizer) (length decay-list))))
+  (let ((v-list (mapcar (lambda (hash) (gethash parameter hash))
+                        (velocity-hash-list optimizer)))
+        (K (length (decay-rate-list optimizer))))
     (loop for v in v-list
-          for decay in decay-list
+          for decay in (decay-rate-list optimizer)
           do (scal! decay v)
-             (axpy! -1.0 gradient v))
+             (axpy! (- (learning-rate optimizer)) gradient v))
     (dolist (v v-list)
-      (axpy! gamma/K v parameter))))
+      (axpy! (/ 1.0 K) v parameter))))
 
 ;; Adagrad
 (define-class adagrad (sgd)
@@ -612,3 +773,31 @@
     (sum! tmp dgamma :axis 0)
     dx))
 
+;;; Dropout layer
+
+(define-class dropout-layer (layer)
+  mask threshold in-train?)
+
+(defun make-dropout-layer (input-dimensions &key (dropout-rate 0.5))
+  (make-instance 'dropout-layer
+                 :input-dimensions  input-dimensions
+                 :output-dimensions input-dimensions
+                 :forward-out  (make-mat input-dimensions)
+                 :backward-out (make-mat input-dimensions)
+                 :mask         (make-mat input-dimensions :initial-element 0.0)
+                 :threshold    (make-mat input-dimensions :initial-element dropout-rate)))
+
+(defmethod forward ((layer dropout-layer) &rest inputs)
+  (let ((x (car inputs))
+        (mask (mask layer))
+        (threshold (threshold layer))
+        (out (forward-out layer)))
+
+    ;; set mask
+    (uniform-random! mask)
+    (.<! threshold mask)
+    ;; set output
+    (geem! 1.0 mask x 0.0 out)))
+
+(defmethod backward ((layer dropout-layer) dout)
+  (geem! 1.0 dout (mask layer) 0.0 (backward-out layer)))

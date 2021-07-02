@@ -13,10 +13,79 @@
   (defparameter mnist-target-test target))
 
 (defparameter mnist-network
-  (make-network '((affine  :in 784 :out 50)
-                  (batch-norm :in 50)
-                  (relu    :in 50)
-                  (affine  :in 50  :out 10)
+  (make-network '((affine  :in 784 :out 512)
+                  (batch-norm :in 512)
+                  (relu    :in 512)
+                  (affine  :in 512 :out 512)
+                  (batch-norm :in 512)
+                  (relu    :in 512)
+                  (affine  :in 512 :out 10)
+                  (softmax :in 10))
+                :batch-size 100
+                :initializer (make-instance 'he-initializer)))
+
+(defparameter mnist-network
+  (make-network (vector
+                 (make-affine-layer '(10 784) '(10 512))
+                 (make-batch-normalization-layer '(10 512))
+                 (make-relu-layer '(10 512))
+                 (make-affine-layer '(10 512) '(10 512))
+                 (make-batch-normalization-layer '(10 512))
+                 (make-relu-layer '(10 512))
+                 (make-affine-layer '(10 512) '(10 10))
+                 (make-softmax/loss-layer '(10 10)))
+                :batch-size 10
+                :initializer (make-instance 'he-initializer)))
+
+(defparameter mnist-network
+  (make-network (vector
+                 (make-affine-layer '(100 784) '(100 512))
+                 (make-batch-normalization-layer '(100 512))
+                 (make-relu-layer '(100 512))
+                 (make-affine-layer '(100 512) '(100 512))
+                 (make-batch-normalization-layer '(100 512))
+                 (make-relu-layer '(100 512))
+                 (make-affine-layer '(100 512) '(100 10))
+                 (make-softmax/loss-layer '(100 10)))
+                :batch-size 100
+                :initializer (make-instance 'he-initializer)))
+
+(defparameter mnist-network
+  (make-network (vector
+                 (make-conv2d-layer '(100 28 28) 3 3)
+                 (make-relu-layer '(100 100))
+                 (make-max-pool-layer '(100 10 10) '(100 5 5) '(2 2))
+                 (make-affine-layer '(100 25) '(100 25))
+                 (make-batch-normalization-layer '(100 25))
+                 (make-relu-layer '(100 25))
+                 (make-affine-layer '(100 25) '(100 25))
+                 (make-batch-normalization-layer '(100 25))
+                 (make-relu-layer '(100 25))
+                 (make-affine-layer '(100 25) '(100 10))
+                 (make-softmax/loss-layer '(100 10)))
+                :batch-size 100
+                :initializer (make-instance 'he-initializer)))
+
+(defparameter cnn-net
+  (make-network '((affine  :in 784 :out 512)
+                  (batch-norm :in 512)
+                  (relu    :in 512)
+                  (affine  :in 512 :out 512)
+                  (batch-norm :in 512)
+                  (relu    :in 512)
+                  (affine  :in 512 :out 512)
+                  (batch-norm :in 512)
+                  (relu    :in 512)
+                  (affine  :in 512 :out 512)
+                  (batch-norm :in 512)
+                  (relu    :in 512)
+                  (affine  :in 512 :out 512)
+                  (batch-norm :in 512)
+                  (relu    :in 512)
+                  (affine  :in 512 :out 512)
+                  (batch-norm :in 512)
+                  (relu    :in 512)
+                  (affine  :in 512 :out 10)
                   (softmax :in 10))
                 :batch-size 100
                 :initializer (make-instance 'he-initializer)))
@@ -24,7 +93,10 @@
 ;;; Momentum optimizer
 
 (setf (optimizer mnist-network)
-      (make-momentum-sgd 0.1 0.9 mnist-network))
+      (make-momentum-sgd 0.01 0.9 mnist-network))
+
+(setf (optimizer mnist-network)
+      (make-momentum-sgd 0.01 0.9 mnist-network))
 
 (setf (optimizer mnist-network)
       (make-adagrad 0.01 0.9 mnist-network))
@@ -32,13 +104,23 @@
 (setf (optimizer mnist-network)
       (make-aggmo 0.01 '(0.0 0.9 0.99) mnist-network))
 
+(setf (optimizer mnist-network)
+      (make-aggmo 0.05 '(0.0 0.9 0.99) mnist-network))
+
 (time
- (loop repeat (* 600 15) do
+ (loop repeat 10000 do
    (let* ((batch-size (batch-size mnist-network))
           (rand (random (- 60000 batch-size))))
      (set-mini-batch! mnist-dataset rand batch-size)
      (set-mini-batch! mnist-target  rand batch-size)
      (train mnist-network mnist-dataset mnist-target))))
+
+(loop repeat (* 600 15) do
+  (let* ((batch-size (batch-size mnist-network))
+         (rand (random (- 60000 batch-size))))
+    (set-mini-batch! mnist-dataset rand batch-size)
+    (set-mini-batch! mnist-target  rand batch-size)
+    (train mnist-network mnist-dataset mnist-target)))
 
 ;; CPU
 
@@ -74,14 +156,22 @@
 
 ;; GPU
 
-;; (with-cuda* ()
-;;   (time
-;;    (loop repeat 10000 do
-;;      (let* ((batch-size (batch-size mnist-network))
-;;             (rand (random (- 60000 batch-size))))
-;;        (set-mini-batch! mnist-dataset rand batch-size)
-;;        (set-mini-batch! mnist-target  rand batch-size)
-;;        (train mnist-network mnist-dataset mnist-target)))))
+(with-cuda* ()
+  (time
+   (loop repeat 10000 do
+     (let* ((batch-size (batch-size mnist-network))
+            (rand (random (- 60000 batch-size))))
+       (set-mini-batch! mnist-dataset rand batch-size)
+       (set-mini-batch! mnist-target  rand batch-size)
+       (train mnist-network mnist-dataset mnist-target)))))
+
+(time
+   (loop repeat 10000 do
+     (let* ((batch-size (batch-size mnist-network))
+            (rand (random (- 60000 batch-size))))
+       (set-mini-batch! mnist-dataset rand batch-size)
+       (set-mini-batch! mnist-target  rand batch-size)
+       (train mnist-network mnist-dataset mnist-target))))
 
 ;; GPU (hidden-size = 50)
 
@@ -147,8 +237,6 @@
 (defparameter train-acc-list2 nil)
 (defparameter test-acc-list2 nil)
 
-(defparameter train-acc-list3 nil)
-(defparameter test-acc-list3 nil)
 
 (with-cuda* ()
   (loop for i from 1 to (* 600 150) do
@@ -158,27 +246,39 @@
       (set-mini-batch! mnist-target  rand batch-size)
       (train mnist-network mnist-dataset mnist-target)
       (when (zerop (mod i 600))
+        ;; (clgp:splot-matrix (mat-to-array (gethash (weight (aref (layers mnist-network) 0))
+        ;;                                           (velocities (optimizer mnist-network)))))
         (let ((train-acc (accuracy mnist-network mnist-dataset mnist-target))
               (test-acc  (accuracy mnist-network mnist-dataset-test mnist-target-test)))
           (format t "cycle: ~A~,15Ttrain-acc: ~A~,10Ttest-acc: ~A~%" i train-acc test-acc)
-          (push train-acc train-acc-list2)
-          (push test-acc  test-acc-list2))))))
+          (push train-acc train-acc-list)
+          (push test-acc  test-acc-list))))))
+
+(loop for i from 1 to (* 600 100) do
+  (let* ((batch-size (batch-size mnist-network))
+         (rand (random (- 60000 batch-size))))
+    (set-mini-batch! mnist-dataset rand batch-size)
+    (set-mini-batch! mnist-target  rand batch-size)
+    (train mnist-network mnist-dataset mnist-target)
+    (when (zerop (mod i 600))
+      (let ((train-acc (accuracy mnist-network mnist-dataset mnist-target))
+            (test-acc  (accuracy mnist-network mnist-dataset-test mnist-target-test)))
+        (format t "cycle: ~A~,15Ttrain-acc: ~A~,10Ttest-acc: ~A~%" i train-acc test-acc)))))
 
 (clgp:plots (list (reverse train-acc-list)
                   (reverse test-acc-list)
                   (reverse train-acc-list2)
                   (reverse test-acc-list2)
+                  (reverse train-acc-list3)
+                  (reverse test-acc-list3)
                   )
-            :title-list '("train(adagrad)" "test(adagrad)"
-                          "train(momentum)" "test(momentum)"
-                          
-                          ;;"train(momentum)" "test(momentum)"
-                          ;; "train(SGD+BN)" "test(SGD+BN)"
+            :title-list '("train(momentum)" "test(momentum)"
+                          "train(momentum,lambda=0.00001)" "test(momentum,,lambda=0.00001)"
+                          "train(momentum,lambda=0.0001)" "test(momentum,,lambda=0.0001)"
                           )
             :x-label "n-epoch"
             :y-label "accuracy"
             :y-range '(0.96 1.015))
-            :output "/home/wiz/tmp/mnist-momentun-adagrad.png")
 
 ;;  6.179 seconds of real time for set-gradient!      ; python: 7.0sec
 ;;  22.230 seconds of real time for set-mini-batch!   ; python: 0.55sec
