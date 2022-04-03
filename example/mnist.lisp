@@ -13,31 +13,6 @@
   (defparameter mnist-target-test target))
 
 (defparameter mnist-network
-  (make-network '((affine  :in 784 :out 512)
-                  (batch-norm :in 512)
-                  (relu    :in 512)
-                  (affine  :in 512 :out 512)
-                  (batch-norm :in 512)
-                  (relu    :in 512)
-                  (affine  :in 512 :out 10)
-                  (softmax :in 10))
-                :batch-size 100
-                :initializer (make-instance 'he-initializer)))
-
-(defparameter mnist-network
-  (make-network (vector
-                 (make-affine-layer '(10 784) '(10 512))
-                 (make-batch-normalization-layer '(10 512))
-                 (make-relu-layer '(10 512))
-                 (make-affine-layer '(10 512) '(10 512))
-                 (make-batch-normalization-layer '(10 512))
-                 (make-relu-layer '(10 512))
-                 (make-affine-layer '(10 512) '(10 10))
-                 (make-softmax/loss-layer '(10 10)))
-                :batch-size 10
-                :initializer (make-instance 'he-initializer)))
-
-(defparameter mnist-network
   (make-network (vector
                  (make-affine-layer '(100 784) '(100 512))
                  (make-batch-normalization-layer '(100 512))
@@ -52,16 +27,13 @@
 
 (defparameter mnist-network
   (make-network (vector
-                 (make-conv2d-layer '(100 28 28) 3 3)
-                 (make-relu-layer '(100 100))
-                 (make-max-pool-layer '(100 10 10) '(100 5 5) '(2 2))
-                 (make-affine-layer '(100 25) '(100 25))
-                 (make-batch-normalization-layer '(100 25))
-                 (make-relu-layer '(100 25))
-                 (make-affine-layer '(100 25) '(100 25))
-                 (make-batch-normalization-layer '(100 25))
-                 (make-relu-layer '(100 25))
-                 (make-affine-layer '(100 25) '(100 10))
+                 1
+                 (make-batch-normalization-layer '(100 512))
+                 (make-relu-layer '(100 512))
+                 (make-affine-layer '(100 512) '(100 512))
+                 (make-batch-normalization-layer '(100 512))
+                 (make-relu-layer '(100 512))
+                 (make-affine-layer '(100 512) '(100 10))
                  (make-softmax/loss-layer '(100 10)))
                 :batch-size 100
                 :initializer (make-instance 'he-initializer)))
@@ -237,6 +209,11 @@
 (defparameter train-acc-list2 nil)
 (defparameter test-acc-list2 nil)
 
+(defparameter train-acc-list3 nil)
+(defparameter test-acc-list3 nil)
+
+(defparameter train-acc-list4 nil)
+(defparameter test-acc-list4 nil)
 
 (with-cuda* ()
   (loop for i from 1 to (* 600 150) do
@@ -251,8 +228,8 @@
         (let ((train-acc (accuracy mnist-network mnist-dataset mnist-target))
               (test-acc  (accuracy mnist-network mnist-dataset-test mnist-target-test)))
           (format t "cycle: ~A~,15Ttrain-acc: ~A~,10Ttest-acc: ~A~%" i train-acc test-acc)
-          (push train-acc train-acc-list)
-          (push test-acc  test-acc-list))))))
+          (push train-acc train-acc-list4)
+          (push test-acc  test-acc-list4))))))
 
 (loop for i from 1 to (* 600 100) do
   (let* ((batch-size (batch-size mnist-network))
