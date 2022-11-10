@@ -12,31 +12,47 @@
   (defparameter mnist-dataset-test datamat)
   (defparameter mnist-target-test target))
 
-(defparameter mnist-network
-  (make-network (vector
-                 (make-affine-layer '(100 784) '(100 512))
-                 (make-batch-normalization-layer '(100 512))
-                 (make-relu-layer '(100 512))
-                 (make-affine-layer '(100 512) '(100 512))
-                 (make-batch-normalization-layer '(100 512))
-                 (make-relu-layer '(100 512))
-                 (make-affine-layer '(100 512) '(100 10))
-                 (make-softmax/loss-layer '(100 10)))
-                :batch-size 100
-                :initializer (make-instance 'he-initializer)))
+;; バッチサイズをいちいち書きたくない。こう書きたいが・・・
+;; ダイナミック変数として外側で設定する？
+;; networkオブジェクトのバッチサイズを使っているところは現状accuracyくらいしかない
+;; TODO: make-network時に前のレイヤーの出力次元数と次のレイヤーの入力次元数が合ってるかどうかのチェックを入れたい
 
 (defparameter mnist-network
-  (make-network (vector
-                 1
-                 (make-batch-normalization-layer '(100 512))
-                 (make-relu-layer '(100 512))
-                 (make-affine-layer '(100 512) '(100 512))
-                 (make-batch-normalization-layer '(100 512))
-                 (make-relu-layer '(100 512))
-                 (make-affine-layer '(100 512) '(100 10))
-                 (make-softmax/loss-layer '(100 10)))
-                :batch-size 100
-                :initializer (make-instance 'he-initializer)))
+  (let ((*batch-size* 100))
+    (make-network (vector
+                   (make-affine-layer 784 512)
+                   (make-batch-normalization-layer 512)
+                   (make-relu-layer 512)
+                   (make-affine-layer 512 512)
+                   (make-batch-normalization-layer 512)
+                   (make-relu-layer 512)
+                   (make-affine-layer 512 10)
+                   (make-softmax/loss-layer 10))
+                  :initializer (make-instance 'he-initializer))))
+
+(defparameter mnist-network
+  (let ((*batch-size* 100))
+    (make-network (vector
+                   (make-affine-layer 784 512)
+                   (make-dropout-layer 512)
+                   (make-relu-layer 512)
+                   (make-affine-layer 512 512)
+                   (make-dropout-layer 512)
+                   (make-relu-layer 512)
+                   (make-affine-layer 512 10)
+                   (make-softmax/loss-layer 10))
+                  :initializer (make-instance 'he-initializer))))
+
+(defparameter mnist-network
+  (let ((*batch-size* 100))
+    (make-network (vector
+                   (make-affine-layer 784 512)
+                   (make-relu-layer 512)
+                   (make-affine-layer 512 512)
+                   (make-relu-layer 512)
+                   (make-affine-layer 512 10)
+                   (make-softmax/loss-layer 10))
+                  :initializer (make-instance 'he-initializer))))
 
 (defparameter cnn-net
   (make-network '((affine  :in 784 :out 512)
@@ -71,7 +87,7 @@
       (make-momentum-sgd 0.01 0.9 mnist-network))
 
 (setf (optimizer mnist-network)
-      (make-adagrad 0.01 0.9 mnist-network))
+      (make-adagrad 0.01 mnist-network))
 
 (setf (optimizer mnist-network)
       (make-aggmo 0.01 '(0.0 0.9 0.99) mnist-network))
@@ -80,7 +96,7 @@
       (make-aggmo 0.05 '(0.0 0.9 0.99) mnist-network))
 
 (time
- (loop repeat 10000 do
+ (loop repeat 100 do
    (let* ((batch-size (batch-size mnist-network))
           (rand (random (- 60000 batch-size))))
      (set-mini-batch! mnist-dataset rand batch-size)
@@ -215,8 +231,11 @@
 (defparameter train-acc-list4 nil)
 (defparameter test-acc-list4 nil)
 
+(defparameter train-acc-list5 nil)
+(defparameter test-acc-list5 nil)
+
 (with-cuda* ()
-  (loop for i from 1 to (* 600 150) do
+  (loop for i from 1 to (* 600 10) do
     (let* ((batch-size (batch-size mnist-network))
            (rand (random (- 60000 batch-size))))
       (set-mini-batch! mnist-dataset rand batch-size)
@@ -228,8 +247,8 @@
         (let ((train-acc (accuracy mnist-network mnist-dataset mnist-target))
               (test-acc  (accuracy mnist-network mnist-dataset-test mnist-target-test)))
           (format t "cycle: ~A~,15Ttrain-acc: ~A~,10Ttest-acc: ~A~%" i train-acc test-acc)
-          (push train-acc train-acc-list4)
-          (push test-acc  test-acc-list4))))))
+          (push train-acc train-acc-list)
+          (push test-acc  test-acc-list))))))
 
 (loop for i from 1 to (* 600 100) do
   (let* ((batch-size (batch-size mnist-network))
@@ -249,10 +268,10 @@
                   (reverse train-acc-list3)
                   (reverse test-acc-list3)
                   )
-            :title-list '("train(momentum)" "test(momentum)"
-                          "train(momentum,lambda=0.00001)" "test(momentum,,lambda=0.00001)"
-                          "train(momentum,lambda=0.0001)" "test(momentum,,lambda=0.0001)"
-                          )
+            ;; :title-list '("train(momentum)" "test(momentum)"
+            ;;               ;; "train(momentum,lambda=0.00001)" "test(momentum,,lambda=0.00001)"
+            ;;               ;; "train(momentum,lambda=0.0001)" "test(momentum,,lambda=0.0001)"
+            ;;               )
             :x-label "n-epoch"
             :y-label "accuracy"
             :y-range '(0.96 1.015))

@@ -12,7 +12,7 @@
   :license ""
   :depends-on (:cl-zerodl
                :prove)
-  :components ((:module "t"
+  :components ((:module "tests"
                 :components
                 ((:test-file "cl-zerodl"))))
   :description "Test system for cl-zerodl"

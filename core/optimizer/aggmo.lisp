@@ -1,11 +1,16 @@
 (defpackage #:cl-zerodl/core/optimizer/aggmo
   (:use #:cl
         #:mgl-mat
-        #:cl-zerodl/core/optimizer/base)
+        #:cl-zerodl/core/layer/base
+        #:cl-zerodl/core/optimizer/base
+        #:cl-zerodl/core/network)
   (:nicknames :zerodl.optimizer.aggmo)
   (:import-from #:cl-zerodl/core/utils
                 #:define-class)
-  (:export #:sdg
+  (:import-from #:cl-zerodl/core/optimizer/sgd
+                #:sgd
+                #:learning-rate)
+  (:export #:aggmo
            #:make-aggmo))
 
 (in-package #:cl-zerodl/core/optimizer/aggmo)

@@ -73,14 +73,13 @@
     (initialize! (initializer network) (filter layer))))
 
 (defun make-network (layers
-                     &key (batch-size 100)
-                       (initializer (make-instance 'he-initializer))
-                       (optimizer (make-instance 'sgd)))
+                     &key (initializer (make-instance 'he-initializer))
+                          (optimizer (make-instance 'sgd)))
   (assert (every (lambda (layer) (typep layer 'layer)) layers))
   (let ((network (make-instance
                   'network
                   :layers layers
-                  :batch-size  batch-size
+                  :batch-size  *batch-size*
                   :initializer initializer
                   :optimizer   optimizer)))
     (initialize-network! network)

@@ -14,12 +14,13 @@
 
 (define-class sigmoid-layer (layer))
 
-(defun make-sigmoid-layer (input-dimensions)
-  (make-instance 'sigmoid-layer
-                 :input-dimensions  input-dimensions
-                 :output-dimensions input-dimensions
-                 :forward-out  (make-mat input-dimensions)
-                 :backward-out (make-mat input-dimensions)))
+(defun make-sigmoid-layer (input-dimension)
+  (let ((input-dimensions (list *batch-size* input-dimension)))
+    (make-instance 'sigmoid-layer
+                   :input-dimensions  input-dimensions
+                   :output-dimensions input-dimensions
+                   :forward-out  (make-mat input-dimensions)
+                   :backward-out (make-mat input-dimensions))))
 
 (defmethod forward ((layer sigmoid-layer) &rest inputs)
   (let ((out (forward-out layer)))

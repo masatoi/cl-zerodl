@@ -15,14 +15,17 @@
 (define-class dropout-layer (layer)
   mask threshold in-train?)
 
-(defun make-dropout-layer (input-dimensions &key (dropout-rate 0.5))
-  (make-instance 'dropout-layer
-                 :input-dimensions  input-dimensions
-                 :output-dimensions input-dimensions
-                 :forward-out  (make-mat input-dimensions)
-                 :backward-out (make-mat input-dimensions)
-                 :mask         (make-mat input-dimensions :initial-element 0.0)
-                 :threshold    (make-mat input-dimensions :initial-element dropout-rate)))
+(defun make-dropout-layer (input-dimension &key (dropout-rate 0.5))
+  (check-type input-dimension alexandria:positive-integer)
+  (check-type dropout-rate alexandria:positive-single-float)
+  (let ((input-dimensions (list *batch-size* input-dimension)))
+    (make-instance 'dropout-layer
+                   :input-dimensions  input-dimensions
+                   :output-dimensions input-dimensions
+                   :forward-out  (make-mat input-dimensions)
+                   :backward-out (make-mat input-dimensions)
+                   :mask         (make-mat input-dimensions :initial-element 0.0)
+                   :threshold    (make-mat input-dimensions :initial-element dropout-rate))))
 
 (defmethod forward ((layer dropout-layer) &rest inputs)
   (let ((x (car inputs))

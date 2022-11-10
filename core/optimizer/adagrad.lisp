@@ -1,13 +1,15 @@
 (defpackage #:cl-zerodl/core/optimizer/adagrad
   (:use #:cl
         #:mgl-mat
+        #:cl-zerodl/core/layer/base
         #:cl-zerodl/core/optimizer/base
         #:cl-zerodl/core/network)
   (:nicknames :zerodl.optimizer.adagrad)
   (:import-from #:cl-zerodl/core/utils
                 #:define-class)
   (:import-from #:cl-zerodl/core/optimizer/sgd
-                #:sgd)
+                #:sgd
+                #:learning-rate)
   (:export #:adagrad
            #:make-adagrad))
 

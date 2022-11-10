@@ -14,10 +14,21 @@
 ;;; Batch Normalization
 
 (define-class batch-normalization-layer (updatable-layer)
-  epsilon beta gamma var sqrtvar ivar x^ xmu tmp)
+  (epsilon :initform 1.0e-6 :type single-float)
+  beta
+  gamma
+  var
+  sqrtvar
+  ivar
+  x^
+  xmu
+  tmp)
 
-(defun make-batch-normalization-layer (input-dimensions &key (epsilon 1.0e-6))
-  (let* ((dim (cadr input-dimensions))
+(defun make-batch-normalization-layer (input-dimension &key (epsilon 1.0e-6))
+  (check-type input-dimension alexandria:positive-integer)
+  (check-type epsilon alexandria:positive-single-float)
+  (let* ((dim input-dimension)
+         (input-dimensions (list *batch-size* dim))
          (layer (make-instance 'batch-normalization-layer
                                :input-dimensions  input-dimensions
                                :output-dimensions input-dimensions

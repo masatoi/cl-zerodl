@@ -44,14 +44,17 @@
 (define-class softmax/loss-layer (layer)
   y target batch-size-tmp)
 
-(defun make-softmax/loss-layer (input-dimensions)
-  (make-instance 'softmax/loss-layer
-                 :input-dimensions  input-dimensions
-                 :output-dimensions 1
-                 :backward-out (make-mat input-dimensions)
-                 :y            (make-mat input-dimensions)
-                 :target       (make-mat input-dimensions)
-                 :batch-size-tmp (make-mat (car input-dimensions))))
+(defun make-softmax/loss-layer (input-dimension)
+  (check-type input-dimension alexandria:positive-integer)
+  (let ((input-dimensions (list *batch-size* input-dimension))
+        (output-dimensions (list *batch-size* 1)))
+    (make-instance 'softmax/loss-layer
+                   :input-dimensions  input-dimensions
+                   :output-dimensions output-dimensions
+                   :backward-out (make-mat input-dimensions)
+                   :y            (make-mat input-dimensions)
+                   :target       (make-mat input-dimensions)
+                   :batch-size-tmp (make-mat (car input-dimensions)))))
 
 (defmethod forward ((layer softmax/loss-layer) &rest inputs)
   (destructuring-bind (x target) inputs
